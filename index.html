@@ -184,6 +184,12 @@
     if (parts.length !== 3) return iso;
     return parts[1] + "/" + parts[2] + "/" + parts[0];
   }
+async function sha256Hex(text) {
+  var enc = new TextEncoder().encode(text);
+  var buf = await crypto.subtle.digest("SHA-256", enc);
+  var arr = Array.from(new Uint8Array(buf));
+  return arr.map(function(b){ return b.toString(16).padStart(2,"0"); }).join("");
+}
 
   // ---------- URL params ----------
   var params = new URLSearchParams(location.search);
@@ -285,11 +291,13 @@
 
   async function ownerInitVehicleIfNeeded() {
     // Claims or verifies owner key; also ensures vehicle row exists
-    var res = await supabase.rpc("init_vehicle", {
-      p_vehicle_id: vehicleId,
-      p_owner_key: activeOwnerKey,
-      p_title: null
-    });
+    var ownerHash = await sha256Hex(activeOwnerKey);
+var res = await supabase.rpc("init_vehicle", {
+  p_vehicle_id: vehicleId,
+  p_owner_hash: ownerHash,
+  p_title: null
+});
+
     if (res.error) throw res.error;
 
     // Update cached title/intervals from RPC return
@@ -300,25 +308,29 @@
   }
 
   async function ownerAddEntry(entry) {
-    var res = await supabase.rpc("add_service_entry", {
-      p_vehicle_id: vehicleId,
-      p_owner_key: activeOwnerKey,
-      p_type: entry.type,
-      p_date: entry.date,
-      p_mileage: entry.mileage,
-      p_notes: entry.notes || "",
-      p_tech: entry.tech || ""
-    });
+    var ownerHash = await sha256Hex(activeOwnerKey);
+var res = await supabase.rpc("add_service_entry", {
+  p_vehicle_id: vehicleId,
+  p_owner_hash: ownerHash,
+  p_type: entry.type,
+  p_date: entry.date,
+  p_mileage: entry.mileage,
+  p_notes: entry.notes || "",
+  p_tech: entry.tech || ""
+});
+
     if (res.error) throw res.error;
   }
 
   async function ownerUpdateVehicle(titleOrNull, intervalsOrNull) {
-    var res = await supabase.rpc("update_vehicle", {
-      p_vehicle_id: vehicleId,
-      p_owner_key: activeOwnerKey,
-      p_title: titleOrNull,
-      p_intervals: intervalsOrNull
-    });
+    var ownerHash = await sha256Hex(activeOwnerKey);
+var res = await supabase.rpc("update_vehicle", {
+  p_vehicle_id: vehicleId,
+  p_owner_hash: ownerHash,
+  p_title: titleOrNull,
+  p_intervals: intervalsOrNull
+});
+
     if (res.error) throw res.error;
 
     if (res.data && res.data.length) {
@@ -705,3 +717,4 @@
 </script>
 </body>
 </html>
+
