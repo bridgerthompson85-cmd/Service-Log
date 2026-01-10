@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vehicle Service Log</title>
+  <style>
+    :root { --border:#e6e6e6; --text:#111; --muted:#666; --bg:#fff; --soft:#f6f6f6; }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial; margin:0; color:var(--text); background: var(--bg); }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 18px; }
+    .top { display:flex; gap:12px; justify-content:space-between; align-items:flex-start; }
+    h1 { font-size: 22px; margin: 0; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.35; }
+    .badge { font-size: 12px; padding: 6px 10px; border:1px solid var(--border); border-radius: 999px; background:#fff; }
+    .btn { border:1px solid var(--text); background:var(--text); color:#fff; padding:10px 12px; border-radius: 12px; font-weight:700; }
+    .btn.secondary { background:#fff; color:var(--text); }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+
+    .grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; margin-top: 14px; }
+    @media (min-width: 640px){ .grid { grid-template-columns: repeat(4, minmax(0,1fr)); } }
+
+    .tile {
+      border:1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+      background:#fff;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      min-height: 94px;
+    }
+    .tile:active { transform: scale(0.99); }
+    .tile.disabled { opacity: .45; }
+    .tile-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
+    .tile-title { font-weight:900; font-size: 14px; line-height:1.1; }
+    .pill { font-size: 11px; padding: 4px 8px; border-radius: 999px; border:1px solid var(--border); background: var(--soft); white-space: nowrap; }
+    .pill.overdue { border-color: #111; background: #111; color: #fff; }
+    .tile-meta { font-size: 12px; color: var(--muted); line-height:1.25; }
+    .mono { font-variant-numeric: tabular-nums; }
+
+    .section-title { margin: 18px 0 10px; font-size: 14px; color: var(--muted); font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+
+    .list { display:flex; flex-direction:column; gap:10px; }
+    .card { border:1px solid var(--border); border-radius: 16px; padding: 12px; background:#fff; }
+    .card-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .type { font-weight:900; }
+    .meta { color:var(--muted); font-size: 13px; margin-top: 4px; }
+    .mi-big { font-weight: 950; font-size: 18px; line-height:1.1; text-align:right; }
+    .mi-sub { font-size: 12px; color: var(--muted); text-align:right; margin-top: 2px; }
+    details { margin-top: 8px; }
+    summary { cursor:pointer; color: var(--text); font-weight: 750; }
+    .chiprow { display:flex; gap:8px; flex-wrap:wrap; margin-top: 8px; }
+    .chip { font-size: 12px; border:1px solid var(--border); background: var(--soft); padding: 6px 10px; border-radius: 999px; }
+
+    /* settings */
+    .settings { border:1px solid var(--border); border-radius: 16px; padding: 12px; background:#fff; }
+    .settings-grid { display:grid; grid-template-columns: 1fr; gap:10px; }
+    @media (min-width: 640px){ .settings-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+    .settings-item { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid var(--border); border-radius: 14px; padding: 10px; }
+    .settings-item strong { font-size: 13px; }
+    .settings-item input { width: 120px; }
+
+    /* modal */
+    .backdrop { position:fixed; inset:0; background: rgba(0,0,0,.35); display:none; }
+    .modal { position:fixed; left:0; right:0; bottom:0; background:#fff; border-radius: 18px 18px 0 0; padding: 14px; display:none; border-top: 1px solid var(--border); }
+    .modal .head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .modal h2 { margin:0; font-size: 18px; }
+    .field { margin-top: 10px; }
+    label { display:block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 800; letter-spacing:.02em; }
+    input, textarea {
+      width:100%;
+      border:1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 16px;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+    textarea { min-height: 92px; resize: vertical; }
+    .modal .actions { display:flex; gap:10px; margin-top: 12px; flex-wrap:wrap; }
+    .danger { border:1px solid #111; background:#fff; color:#111; }
+    .owner-bar { margin-top: 10px; display:flex; gap:10px; align-items:center; justify-content:flex-start; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1 id="vehicleTitle">Vehicle Log</h1>
+        <div class="sub" id="vehicleSubtitle">Loading…</div>
+        <div class="owner-bar">
+          <button class="btn secondary" id="editTitleBtn" style="display:none;">Edit title</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="badge" id="lockBadge">Locked (view-only)</span>
+        <button class="btn secondary" id="unlockBtn">Unlock</button>
+      </div>
+    </div>
+
+    <div class="grid" id="tiles"></div>
+
+    <!-- Hidden unless unlocked -->
+    <div id="remindersSection" style="display:none;">
+      <div class="section-title">Service intervals</div>
+      <div class="settings">
+        <div class="sub" style="margin-top:0;">
+          Set mileage intervals (miles). Tiles show “Due @ …” based on the last recorded mileage.
+        </div>
+        <div class="settings-grid" id="settingsGrid" style="margin-top:10px;"></div>
+        <div class="sub" style="margin-top:10px;">Tip: set an interval to 0 to disable reminders for that service.</div>
+      </div>
+    </div>
+
+    <div class="section-title">Service history</div>
+    <div class="list" id="history"></div>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <div class="modal" id="modal">
+    <div class="head">
+      <h2 id="modalTitle">Add service</h2>
+      <button class="btn secondary" id="closeBtn">Close</button>
+    </div>
+
+    <div class="field">
+      <label>Date</label>
+      <input type="date" id="date" />
+    </div>
+
+    <div class="field">
+      <label>Mileage</label>
+      <input type="number" inputmode="numeric" id="mileage" placeholder="e.g., 124500" />
+    </div>
+
+    <div class="field">
+      <label>Short notes</label>
+      <input type="text" id="notes" placeholder="e.g., 5W-30 synthetic, OEM filter" />
+    </div>
+
+    <div class="field">
+      <label>Technical notes</label>
+      <textarea id="tech" placeholder="Torque specs, part numbers, observations, fluid amounts, etc."></textarea>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="saveBtn">Save entry</button>
+      <button class="btn secondary" id="cancelBtn">Cancel</button>
+      <button class="btn danger" id="deleteAllBtn" title="Owner only">Clear all (demo)</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  // ---------- Safe helpers (avoid newer JS features that sometimes break) ----------
+  function escapeHtml(s) {
+    s = (s === null || s === undefined) ? "" : String(s);
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "id_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+  }
+
+  function fmtMiles(n) {
+    if (typeof n !== "number" || isNaN(n)) return "";
+    return n.toLocaleString() + " mi";
+  }
+
+  function formatDate(iso) {
+    if (!iso) return "";
+    var parts = iso.split("-");
+    if (parts.length !== 3) return iso;
+    return parts[1] + "/" + parts[2] + "/" + parts[0];
+  }
+
+  // ---------- URL params ----------
+  var params = new URLSearchParams(location.search);
+  var vehicleId = (params.get("v") || "ABC123").toUpperCase();
+  var ownerKey = params.get("key") || "";
+
+  // Change this to your secret:
+  var OWNER_KEY = "4062311418";
+
+  var SERVICES = [
+    "Oil Change", "Tire Rotation", "Air Filter", "Cabin Filter",
+    "Brake Service", "Coolant", "Transmission", "Battery",
+    "Spark Plugs", "Inspection", "Alignment", "Other"
+  ];
+
+  var DEFAULT_INTERVALS = {
+    "Oil Change": 5000,
+    "Tire Rotation": 6000,
+    "Air Filter": 15000,
+    "Cabin Filter": 15000,
+    "Brake Service": 30000,
+    "Coolant": 50000,
+    "Transmission": 60000,
+    "Battery": 0,
+    "Spark Plugs": 60000,
+    "Inspection": 12000,
+    "Alignment": 12000,
+    "Other": 0
+  };
+
+  var unlocked = false;
+  var selectedService = null;
+
+  var storageKey = "service_log_" + vehicleId;
+  var intervalsKey = "service_intervals_" + vehicleId;
+  var titleKey = "vehicle_title_" + vehicleId;
+
+  // ---------- Elements ----------
+  var tilesEl = document.getElementById("tiles");
+  var historyEl = document.getElementById("history");
+  var settingsGrid = document.getElementById("settingsGrid");
+  var remindersSection = document.getElementById("remindersSection");
+
+  var vehicleTitleEl = document.getElementById("vehicleTitle");
+  var vehicleSubtitleEl = document.getElementById("vehicleSubtitle");
+  var editTitleBtn = document.getElementById("editTitleBtn");
+
+  var lockBadge = document.getElementById("lockBadge");
+  var unlockBtn = document.getElementById("unlockBtn");
+
+  var modal = document.getElementById("modal");
+  var backdrop = document.getElementById("backdrop");
+  var modalTitle = document.getElementById("modalTitle");
+
+  var dateEl = document.getElementById("date");
+  var mileageEl = document.getElementById("mileage");
+  var notesEl = document.getElementById("notes");
+  var techEl = document.getElementById("tech");
+
+  // ---------- Storage ----------
+  function loadEntries() {
+    try { return JSON.parse(localStorage.getItem(storageKey) || "[]"); }
+    catch (e) { return []; }
+  }
+  function saveEntries(entries) {
+    localStorage.setItem(storageKey, JSON.stringify(entries));
+  }
+
+  function loadIntervals() {
+    try {
+      var raw = localStorage.getItem(intervalsKey);
+      if (!raw) return Object.assign({}, DEFAULT_INTERVALS);
+      var parsed = JSON.parse(raw);
+      return Object.assign({}, DEFAULT_INTERVALS, parsed);
+    } catch (e) {
+      return Object.assign({}, DEFAULT_INTERVALS);
+    }
+  }
+  function saveIntervals(intervals) {
+    localStorage.setItem(intervalsKey, JSON.stringify(intervals));
+  }
+
+  function loadVehicleTitle() {
+    var t = localStorage.getItem(titleKey);
+    if (t && t.trim()) return t.trim();
+    return "Vehicle Log • " + vehicleId;
+  }
+  function saveVehicleTitle(t) {
+    localStorage.setItem(titleKey, (t || "").trim());
+  }
+
+  // ---------- Reminder calcs ----------
+  function getLastMileageByType(entries) {
+    var map = {};
+    for (var i=0; i<entries.length; i++) {
+      var e = entries[i];
+      if (!e || !e.type || typeof e.mileage !== "number") continue;
+
+      var cur = map[e.type];
+      if (!cur) { map[e.type] = { mileage: e.mileage, date: e.date || "" }; continue; }
+
+      var dA = e.date || "";
+      var dB = cur.date || "";
+      if (dA > dB || (dA === dB && e.mileage > cur.mileage)) {
+        map[e.type] = { mileage: e.mileage, date: e.date || "" };
+      }
+    }
+    return map;
+  }
+
+  function getLatestMileage(entries) {
+    var best = null;
+    for (var i=0; i<entries.length; i++) {
+      var e = entries[i];
+      if (!e || typeof e.mileage !== "number") continue;
+      if (best === null || e.mileage > best) best = e.mileage;
+    }
+    return best;
+  }
+
+  function computeReminder(type, intervals, lastByType, latestMileage) {
+    var interval = Number(intervals[type] || 0);
+    var last = (lastByType[type] && typeof lastByType[type].mileage === "number") ? lastByType[type].mileage : null;
+
+    if (!interval || interval <= 0 || last === null) {
+      return { interval: interval, last: last, due: null, status: "none", overdueBy: null };
+    }
+
+    var due = last + interval;
+
+    if (typeof latestMileage === "number") {
+      if (latestMileage >= due) return { interval: interval, last: last, due: due, status: "overdue", overdueBy: latestMileage - due };
+      var remaining = due - latestMileage;
+      if (remaining <= 500) return { interval: interval, last: last, due: due, status: "due_soon", overdueBy: null };
+    }
+    return { interval: interval, last: last, due: due, status: "ok", overdueBy: null };
+  }
+
+  // ---------- UI ----------
+  function setUnlocked(val) {
+    unlocked = val;
+    lockBadge.textContent = unlocked ? "Unlocked (can add)" : "Locked (view-only)";
+    unlockBtn.textContent = unlocked ? "Lock" : "Unlock";
+
+    remindersSection.style.display = unlocked ? "block" : "none";
+    editTitleBtn.style.display = unlocked ? "inline-block" : "none";
+
+    renderTiles();
+    renderHistory();
+    if (unlocked) renderSettings();
+  }
+
+  function renderTitleAndSubtitle() {
+    vehicleTitleEl.textContent = loadVehicleTitle();
+    vehicleSubtitleEl.textContent = ""; // remove subtitle
+  }
+
+  function openModal(serviceType) {
+    if (!unlocked) return;
+    selectedService = serviceType;
+    modalTitle.textContent = "Add: " + serviceType;
+
+    var today = new Date();
+    dateEl.value = today.toISOString().slice(0,10);
+    mileageEl.value = "";
+    notesEl.value = "";
+    techEl.value = "";
+
+    backdrop.style.display = "block";
+    modal.style.display = "block";
+  }
+
+  function closeModal() {
+    backdrop.style.display = "none";
+    modal.style.display = "none";
+    selectedService = null;
+  }
+
+  function renderSettings() {
+    var intervals = loadIntervals();
+    settingsGrid.innerHTML = "";
+
+    for (var i=0; i<SERVICES.length; i++) {
+      (function (type) {
+        var wrap = document.createElement("div");
+        wrap.className = "settings-item";
+
+        var left = document.createElement("div");
+        left.innerHTML = "<strong>" + escapeHtml(type) + "</strong><div class='sub' style='margin-top:4px;'>Interval</div>";
+
+        var input = document.createElement("input");
+        input.type = "number";
+        input.inputMode = "numeric";
+        input.min = "0";
+        input.step = "100";
+        input.value = String(intervals[type] || 0);
+        input.disabled = !unlocked;
+
+        input.onchange = function () {
+          var next = loadIntervals();
+          var v = Number(input.value);
+          next[type] = (isFinite(v) && v >= 0) ? Math.floor(v) : 0;
+          saveIntervals(next);
+          renderTiles();
+        };
+
+        wrap.appendChild(left);
+        wrap.appendChild(input);
+        settingsGrid.appendChild(wrap);
+      })(SERVICES[i]);
+    }
+  }
+
+  function renderTiles() {
+    var entries = loadEntries();
+    var intervals = loadIntervals();
+    var lastByType = getLastMileageByType(entries);
+    var latestMileage = getLatestMileage(entries);
+
+    tilesEl.innerHTML = "";
+
+    for (var i=0; i<SERVICES.length; i++) {
+      (function (type) {
+        var reminder = computeReminder(type, intervals, lastByType, latestMileage);
+
+        var div = document.createElement("div");
+        div.className = "tile" + (unlocked ? "" : " disabled");
+        div.onclick = function () { openModal(type); };
+
+        var pillText = "—";
+        if (reminder.status === "overdue") pillText = "Overdue";
+        else if (reminder.status === "due_soon") pillText = "Due soon";
+        else if (reminder.status === "ok") pillText = "Tracked";
+
+        var pillClass = "pill" + (reminder.status === "overdue" ? " overdue" : "");
+
+        var lastLine = (reminder.last !== null)
+          ? ("Last @ <span class='mono'>" + escapeHtml(fmtMiles(reminder.last)) + "</span>")
+          : "No record yet";
+
+        var dueLine = (reminder.due !== null)
+          ? ("Due @ <span class='mono'>" + escapeHtml(fmtMiles(reminder.due)) + "</span>")
+          : ((intervals[type] > 0) ? "Add first entry to start reminders" : "Reminders off");
+
+        var extra = "";
+        if (reminder.status === "overdue" && typeof reminder.overdueBy === "number") {
+          extra = "<div class='tile-meta'>Over by <span class='mono'>" + escapeHtml(fmtMiles(reminder.overdueBy)) + "</span></div>";
+        }
+
+        div.innerHTML =
+          "<div class='tile-head'>" +
+            "<div class='tile-title'>" + escapeHtml(type) + "</div>" +
+            "<div class='" + pillClass + "'>" + pillText + "</div>" +
+          "</div>" +
+          "<div class='tile-meta'>" + lastLine + "</div>" +
+          "<div class='tile-meta'>" + dueLine + "</div>" +
+          extra;
+
+        tilesEl.appendChild(div);
+      })(SERVICES[i]);
+    }
+  }
+
+  function renderHistory() {
+    var entries = loadEntries().slice();
+    entries.sort(function (a,b) {
+      var da = (a && a.date) ? a.date : "";
+      var db = (b && b.date) ? b.date : "";
+      if (db !== da) return db > da ? 1 : -1;
+      var ma = (a && typeof a.mileage === "number") ? a.mileage : 0;
+      var mb = (b && typeof b.mileage === "number") ? b.mileage : 0;
+      return mb - ma;
+    });
+
+    historyEl.innerHTML = "";
+
+    if (!entries.length) {
+      var empty = document.createElement("div");
+      empty.className = "card";
+      empty.innerHTML = "<div class='meta'>No entries yet.</div>";
+      historyEl.appendChild(empty);
+      return;
+    }
+
+    for (var i=0; i<entries.length; i++) {
+      var e = entries[i];
+      var card = document.createElement("div");
+      card.className = "card";
+
+      var meta = [];
+      if (e && e.date) meta.push(formatDate(e.date));
+
+      var chips = "";
+      if (e && typeof e.mileage === "number") chips += "<span class='chip mono'>" + escapeHtml(fmtMiles(e.mileage)) + "</span>";
+      if (e && e.notes) chips += "<span class='chip'>" + escapeHtml(e.notes) + "</span>";
+
+      var tech = "";
+      if (e && e.tech) {
+        tech =
+          "<details>" +
+            "<summary>Technical notes</summary>" +
+            "<div style='margin-top:8px; color:#333; white-space:pre-wrap;'>" + escapeHtml(e.tech) + "</div>" +
+          "</details>";
+      }
+
+      var milesRight = (e && typeof e.mileage === "number") ? e.mileage.toLocaleString() : "—";
+
+      card.innerHTML =
+        "<div class='card-top'>" +
+          "<div>" +
+            "<div class='type'>" + escapeHtml((e && e.type) ? e.type : "Service") + "</div>" +
+            "<div class='meta'>" + escapeHtml(meta.join(" • ")) + "</div>" +
+            "<div class='chiprow'>" + chips + "</div>" +
+          "</div>" +
+          "<div>" +
+            "<div class='mi-big mono'>" + escapeHtml(milesRight) + "</div>" +
+            "<div class='mi-sub'>miles</div>" +
+          "</div>" +
+        "</div>" +
+        tech;
+
+      historyEl.appendChild(card);
+    }
+  }
+
+  // ---------- Events ----------
+  document.getElementById("closeBtn").onclick = closeModal;
+  document.getElementById("cancelBtn").onclick = closeModal;
+  backdrop.onclick = closeModal;
+
+  document.getElementById("saveBtn").onclick = function () {
+    if (!selectedService) return;
+
+    var date = dateEl.value || "";
+    var mileage = mileageEl.value ? Number(mileageEl.value) : null;
+
+    if (!date) return alert("Please add a date.");
+    if (mileage === null || isNaN(mileage) || mileage < 0) return alert("Please add a valid mileage.");
+
+    var entry = {
+      id: uuid(),
+      type: selectedService,
+      date: date,
+      mileage: mileage,
+      notes: (notesEl.value || "").trim(),
+      tech: (techEl.value || "").trim(),
+      created_at: new Date().toISOString()
+    };
+
+    var entries = loadEntries();
+    entries.push(entry);
+    saveEntries(entries);
+
+    closeModal();
+    renderTiles();
+    renderHistory();
+  };
+
+  document.getElementById("deleteAllBtn").onclick = function () {
+    if (!unlocked) return alert("Unlock first.");
+    if (!confirm("Clear all entries for this vehicle (demo only)?")) return;
+    localStorage.removeItem(storageKey);
+    renderTiles();
+    renderHistory();
+    closeModal();
+  };
+
+  unlockBtn.onclick = function () {
+    if (unlocked) return setUnlocked(false);
+
+    var key = ownerKey || prompt("Enter owner key:");
+    if (key && key === OWNER_KEY) setUnlocked(true);
+    else alert("Wrong key.");
+  };
+
+  editTitleBtn.onclick = function () {
+    if (!unlocked) return;
+    var current = loadVehicleTitle();
+    var next = prompt("Set vehicle title (shown at top):", current);
+    if (next === null) return;
+    next = next.trim();
+    if (!next) return alert("Title can’t be blank.");
+    saveVehicleTitle(next);
+    renderTitleAndSubtitle();
+  };
+
+  // ---------- Init ----------
+  renderTitleAndSubtitle();
+  renderTiles();
+  renderHistory();
+
+  if (ownerKey && ownerKey === OWNER_KEY) setUnlocked(true);
+})();
+</script>
+</body>
+</html>
