@@ -89,7 +89,7 @@
     <div class="top">
       <div>
         <h1 id="vehicleTitle">Vehicle Log</h1>
-        <div class="sub" id="vehicleSubtitle">Loading…</div>
+        <div class="sub" id="vehicleSubtitle"></div>
         <div class="owner-bar">
           <button class="btn secondary" id="editTitleBtn" style="display:none;">Edit title</button>
         </div>
@@ -157,7 +157,7 @@
 
 <script>
 (function () {
-  // ---------- Safe helpers (avoid newer JS features that sometimes break) ----------
+  // ---------- Safe helpers ----------
   function escapeHtml(s) {
     s = (s === null || s === undefined) ? "" : String(s);
     return s
@@ -187,13 +187,15 @@
 
   // ---------- URL params ----------
   var params = new URLSearchParams(location.search);
-  var vehicleId = (params.get("v") || "ABC123").toUpperCase();
-  var ownerKey = params.get("key") || "";
-const SUPABASE_URL = "PASTE_YOUR_PROJECT_URL";
-const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_KEY";
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var vehicleId = (params.get("v") || "ABC123").toUpperCase().trim();
+  var ownerKeyFromUrl = (params.get("key") || "").trim();
 
-  // Change this to your secret:
+  // ---------- Supabase (REPLACE THESE TWO) ----------
+  const SUPABASE_URL = "https://wbgdmdyeuhmearetomyo.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndiZ2RtZHlldWhtZWFyZXRvbXlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgwODE2OTYsImV4cCI6MjA4MzY1NzY5Nn0.rRS2YMjvPP2MT5MgxBmo-p2-gw0H3Vp9BCSvo2SdzZw";
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // ---------- Owner key (used only for client-side unlock gate) ----------
   var OWNER_KEY = "4062311418";
 
   var SERVICES = [
@@ -220,9 +222,13 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var unlocked = false;
   var selectedService = null;
 
-  var storageKey = "service_log_" + vehicleId;
-  var intervalsKey = "service_intervals_" + vehicleId;
-  var titleKey = "vehicle_title_" + vehicleId;
+  // DB-backed state (shared across devices)
+  var serverTitle = null;
+  var serverEntries = [];
+  var serverIntervals = null;
+
+  // Owner key used for RPC calls after unlock
+  var activeOwnerKey = "";
 
   // ---------- Elements ----------
   var tilesEl = document.getElementById("tiles");
@@ -246,36 +252,94 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var notesEl = document.getElementById("notes");
   var techEl = document.getElementById("tech");
 
-  // ---------- Storage ----------
-  function loadEntries() {
-    try { return JSON.parse(localStorage.getItem(storageKey) || "[]"); }
-    catch (e) { return []; }
+  // ---------- Supabase helpers ----------
+  async function fetchLog(vId) {
+    // Vehicle row (may not exist yet)
+    var v = await supabase
+      .from("vehicles")
+      .select("id,title,intervals")
+      .eq("id", vId)
+      .limit(1);
+
+    if (v.error) throw v.error;
+
+    if (v.data && v.data.length) {
+      serverTitle = (v.data[0].title || "").trim() || ("Vehicle Log • " + vId);
+      serverIntervals = v.data[0].intervals || {};
+    } else {
+      serverTitle = "Vehicle Log • " + vId;
+      serverIntervals = null;
+    }
+
+    var e = await supabase
+      .from("service_entries")
+      .select("*")
+      .eq("vehicle_id", vId)
+      .order("date", { ascending: false })
+      .order("mileage", { ascending: false });
+
+    if (e.error) throw e.error;
+
+    serverEntries = e.data || [];
   }
-  function saveEntries(entries) {
-    localStorage.setItem(storageKey, JSON.stringify(entries));
+
+  async function ownerInitVehicleIfNeeded() {
+    // Claims or verifies owner key; also ensures vehicle row exists
+    var res = await supabase.rpc("init_vehicle", {
+      p_vehicle_id: vehicleId,
+      p_owner_key: activeOwnerKey,
+      p_title: null
+    });
+    if (res.error) throw res.error;
+
+    // Update cached title/intervals from RPC return
+    if (res.data && res.data.length) {
+      serverTitle = (res.data[0].title || "").trim() || serverTitle;
+      serverIntervals = res.data[0].intervals || (serverIntervals || {});
+    }
+  }
+
+  async function ownerAddEntry(entry) {
+    var res = await supabase.rpc("add_service_entry", {
+      p_vehicle_id: vehicleId,
+      p_owner_key: activeOwnerKey,
+      p_type: entry.type,
+      p_date: entry.date,
+      p_mileage: entry.mileage,
+      p_notes: entry.notes || "",
+      p_tech: entry.tech || ""
+    });
+    if (res.error) throw res.error;
+  }
+
+  async function ownerUpdateVehicle(titleOrNull, intervalsOrNull) {
+    var res = await supabase.rpc("update_vehicle", {
+      p_vehicle_id: vehicleId,
+      p_owner_key: activeOwnerKey,
+      p_title: titleOrNull,
+      p_intervals: intervalsOrNull
+    });
+    if (res.error) throw res.error;
+
+    if (res.data && res.data.length) {
+      serverTitle = (res.data[0].title || "").trim() || serverTitle;
+      serverIntervals = res.data[0].intervals || serverIntervals || {};
+    }
+  }
+
+  // ---------- DB-backed accessors ----------
+  function loadEntries() {
+    return serverEntries.slice();
   }
 
   function loadIntervals() {
-    try {
-      var raw = localStorage.getItem(intervalsKey);
-      if (!raw) return Object.assign({}, DEFAULT_INTERVALS);
-      var parsed = JSON.parse(raw);
-      return Object.assign({}, DEFAULT_INTERVALS, parsed);
-    } catch (e) {
-      return Object.assign({}, DEFAULT_INTERVALS);
+    var base = Object.assign({}, DEFAULT_INTERVALS);
+    if (serverIntervals && typeof serverIntervals === "object") {
+      // merge
+      for (var k in serverIntervals) base[k] = serverIntervals[k];
+      return base;
     }
-  }
-  function saveIntervals(intervals) {
-    localStorage.setItem(intervalsKey, JSON.stringify(intervals));
-  }
-
-  function loadVehicleTitle() {
-    var t = localStorage.getItem(titleKey);
-    if (t && t.trim()) return t.trim();
-    return "Vehicle Log • " + vehicleId;
-  }
-  function saveVehicleTitle(t) {
-    localStorage.setItem(titleKey, (t || "").trim());
+    return base;
   }
 
   // ---------- Reminder calcs ----------
@@ -340,8 +404,8 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
 
   function renderTitleAndSubtitle() {
-    vehicleTitleEl.textContent = loadVehicleTitle();
-    vehicleSubtitleEl.textContent = ""; // remove subtitle
+    vehicleTitleEl.textContent = serverTitle || ("Vehicle Log • " + vehicleId);
+    vehicleSubtitleEl.textContent = "";
   }
 
   function openModal(serviceType) {
@@ -385,12 +449,22 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         input.value = String(intervals[type] || 0);
         input.disabled = !unlocked;
 
-        input.onchange = function () {
-          var next = loadIntervals();
-          var v = Number(input.value);
-          next[type] = (isFinite(v) && v >= 0) ? Math.floor(v) : 0;
-          saveIntervals(next);
-          renderTiles();
+        input.onchange = async function () {
+          try {
+            var next = loadIntervals();
+            var v = Number(input.value);
+            next[type] = (isFinite(v) && v >= 0) ? Math.floor(v) : 0;
+
+            // Persist to DB for sync
+            await ownerUpdateVehicle(null, next);
+            serverIntervals = next;
+
+            renderTiles();
+          } catch (e) {
+            alert("Could not save interval: " + (e.message || e));
+            // revert UI
+            renderSettings();
+          }
         };
 
         wrap.appendChild(left);
@@ -517,7 +591,7 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   document.getElementById("cancelBtn").onclick = closeModal;
   backdrop.onclick = closeModal;
 
-  document.getElementById("saveBtn").onclick = function () {
+  document.getElementById("saveBtn").onclick = async function () {
     if (!selectedService) return;
 
     var date = dateEl.value || "";
@@ -536,52 +610,98 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       created_at: new Date().toISOString()
     };
 
-    var entries = loadEntries();
-    entries.push(entry);
-    saveEntries(entries);
+    try {
+      await ownerAddEntry(entry);
+      await fetchLog(vehicleId);
 
-    closeModal();
-    renderTiles();
-    renderHistory();
+      closeModal();
+      renderTiles();
+      renderHistory();
+    } catch (e) {
+      alert("Could not save entry: " + (e.message || e));
+    }
   };
 
   document.getElementById("deleteAllBtn").onclick = function () {
-    if (!unlocked) return alert("Unlock first.");
-    if (!confirm("Clear all entries for this vehicle (demo only)?")) return;
-    localStorage.removeItem(storageKey);
-    renderTiles();
-    renderHistory();
-    closeModal();
+    alert("Clear all is disabled in the DB version. (We can add a safe owner-only delete later.)");
   };
 
-  unlockBtn.onclick = function () {
-    if (unlocked) return setUnlocked(false);
+  unlockBtn.onclick = async function () {
+    if (unlocked) {
+      activeOwnerKey = "";
+      return setUnlocked(false);
+    }
 
-    var key = ownerKey || prompt("Enter owner key:");
-    if (key && key === OWNER_KEY) setUnlocked(true);
-    else alert("Wrong key.");
+    var key = ownerKeyFromUrl || prompt("Enter owner key:");
+    if (!key) return;
+
+    // Client-side gate (same as before)
+    if (key !== OWNER_KEY) return alert("Wrong key.");
+
+    activeOwnerKey = key;
+
+    try {
+      setUnlocked(true);
+      // Claim/verify in DB and ensure vehicle exists
+      await ownerInitVehicleIfNeeded();
+      await fetchLog(vehicleId);
+
+      renderTitleAndSubtitle();
+      renderTiles();
+      renderHistory();
+      renderSettings();
+    } catch (e) {
+      activeOwnerKey = "";
+      setUnlocked(false);
+      alert("Owner init failed: " + (e.message || e));
+    }
   };
 
-  editTitleBtn.onclick = function () {
+  editTitleBtn.onclick = async function () {
     if (!unlocked) return;
-    var current = loadVehicleTitle();
+
+    var current = serverTitle || ("Vehicle Log • " + vehicleId);
     var next = prompt("Set vehicle title (shown at top):", current);
     if (next === null) return;
+
     next = next.trim();
     if (!next) return alert("Title can’t be blank.");
-    saveVehicleTitle(next);
-    renderTitleAndSubtitle();
+
+    try {
+      await ownerUpdateVehicle(next, null);
+      await fetchLog(vehicleId);
+      renderTitleAndSubtitle();
+      renderTiles();
+    } catch (e) {
+      alert("Could not save title: " + (e.message || e));
+    }
   };
 
   // ---------- Init ----------
-  renderTitleAndSubtitle();
-  renderTiles();
-  renderHistory();
+  (async function init() {
+    try {
+      await fetchLog(vehicleId);
+      renderTitleAndSubtitle();
+      renderTiles();
+      renderHistory();
 
-  if (ownerKey && ownerKey === OWNER_KEY) setUnlocked(true);
+      // If URL includes key, auto-unlock (same behavior as before)
+      if (ownerKeyFromUrl && ownerKeyFromUrl === OWNER_KEY) {
+        activeOwnerKey = ownerKeyFromUrl;
+        setUnlocked(true);
+        await ownerInitVehicleIfNeeded();
+        await fetchLog(vehicleId);
+        renderTitleAndSubtitle();
+        renderTiles();
+        renderHistory();
+        renderSettings();
+      }
+    } catch (e) {
+      alert("Load error: " + (e.message || e));
+      vehicleTitleEl.textContent = "Vehicle Log";
+    }
+  })();
 })();
 </script>
 </body>
 </html>
-
-
