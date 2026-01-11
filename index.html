@@ -698,9 +698,93 @@
   document.getElementById("cancelBtn").onclick = closeModal;
   backdrop.onclick = closeModal;
 
-  printBtn.onclick = function () {
-    window.print();
-  };
+ printBtn.onclick = function () {
+  // Build a clean printable report (not the app UI)
+  var entries = loadEntries().slice();
+
+  // Sort newest first (same as history)
+  entries.sort(function (a,b) {
+    var da = (a && a.date) ? a.date : "";
+    var db = (b && b.date) ? b.date : "";
+    if (db !== da) return db > da ? 1 : -1;
+    var ma = (a && typeof a.mileage === "number") ? a.mileage : 0;
+    var mb = (b && typeof b.mileage === "number") ? b.mileage : 0;
+    return mb - ma;
+  });
+
+  var title = (serverTitle || ("Vehicle Log • " + vehicleId));
+  var today = new Date();
+  var printedOn = today.toLocaleDateString() + " " + today.toLocaleTimeString();
+
+  var rowsHtml = "";
+  if (!entries.length) {
+    rowsHtml = "<tr><td colspan='4' style='padding:12px; color:#555;'>No entries yet.</td></tr>";
+  } else {
+    for (var i=0; i<entries.length; i++) {
+      var e = entries[i] || {};
+      var dateStr = e.date ? formatDate(e.date) : "";
+      var mileageStr = (typeof e.mileage === "number") ? e.mileage.toLocaleString() : "";
+      var typeStr = e.type || "Service";
+      var notesStr = e.notes || "";
+      var techStr = e.tech || "";
+
+      // notes + tech notes always expanded
+      var detailsBlock = "";
+      if (notesStr.trim()) detailsBlock += "<div><strong>Notes:</strong> " + escapeHtml(notesStr) + "</div>";
+      if (techStr.trim()) {
+        detailsBlock += "<div style='margin-top:6px;'><strong>Technical:</strong>"
+          + "<div style='white-space:pre-wrap; margin-top:4px;'>" + escapeHtml(techStr) + "</div></div>";
+      }
+      if (!detailsBlock) detailsBlock = "<span style='color:#777;'>—</span>";
+
+      rowsHtml += ""
+        + "<tr>"
+        +   "<td>" + escapeHtml(dateStr) + "</td>"
+        +   "<td>" + escapeHtml(typeStr) + "</td>"
+        +   "<td style='text-align:right; white-space:nowrap;'>" + escapeHtml(mileageStr) + "</td>"
+        +   "<td style='font-size:12px; color:#333;'>" + detailsBlock + "</td>"
+        + "</tr>";
+    }
+  }
+
+  var html =
+    "<!doctype html>"
+    + "<html><head><meta charset='utf-8' />"
+    + "<meta name='viewport' content='width=device-width, initial-scale=1.0' />"
+    + "<title>Service History</title>"
+    + "<style>"
+    + "  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; margin:24px; color:#111;}"
+    + "  h1{font-size:18px; margin:0 0 6px 0;}"
+    + "  .meta{color:#555; font-size:12px; margin-bottom:14px;}"
+    + "  table{width:100%; border-collapse:collapse;}"
+    + "  th,td{border-bottom:1px solid #e6e6e6; padding:10px 8px; vertical-align:top;}"
+    + "  th{font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#555; text-align:left;}"
+    + "  @media print{ body{margin:14mm;} }"
+    + "</style></head><body>"
+    + "<h1>" + escapeHtml(title) + "</h1>"
+    + "<div class='meta'>Vehicle ID: <strong>" + escapeHtml(vehicleId) + "</strong> &nbsp; • &nbsp; Printed: " + escapeHtml(printedOn) + "</div>"
+    + "<table>"
+    +   "<thead><tr>"
+    +     "<th style='width:90px;'>Date</th>"
+    +     "<th style='width:140px;'>Service</th>"
+    +     "<th style='width:90px; text-align:right;'>Mileage</th>"
+    +     "<th>Details</th>"
+    +   "</tr></thead>"
+    +   "<tbody>" + rowsHtml + "</tbody>"
+    + "</table>"
+    + "<script>window.onload=function(){ window.print(); }<\/script>"
+    + "</body></html>";
+
+  var w = window.open("", "_blank");
+  if (!w) {
+    alert("Pop-up blocked. Allow pop-ups for this site to print.");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+};
+
 
   document.getElementById("saveBtn").onclick = async function () {
     if (!selectedService) return;
@@ -818,3 +902,4 @@
 </script>
 </body>
 </html>
+
