@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -87,6 +86,26 @@
     /* tiny buttons row on cards */
     .card-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
     .btn.sm { padding:8px 10px; border-radius: 12px; font-weight:800; }
+
+    /* ---------- PRINT: only service history ---------- */
+    #historyPrintTitle { display:none; }
+    @media print {
+      body { background:#fff; }
+      .wrap { max-width: 100%; padding: 0; }
+
+      /* hide everything except the history section */
+      .top, .grid, #remindersSection, .owner-bar, .row, .badge, #unlockBtn { display:none !important; }
+
+      /* hide the normal section title and show print-only one */
+      .section-title { display:none !important; }
+      #historyPrintTitle { display:block !important; }
+
+      #history { display:block !important; }
+      .card { break-inside: avoid; page-break-inside: avoid; }
+
+      /* optional: keep print clean by not printing the action buttons */
+      .card-actions { display:none !important; }
+    }
   </style>
 </head>
 <body>
@@ -101,6 +120,7 @@
       </div>
 
       <div class="row">
+        <button class="btn secondary" id="printBtn">Print service history</button>
         <span class="badge" id="lockBadge">Locked (view-only)</span>
         <button class="btn secondary" id="unlockBtn">Unlock</button>
       </div>
@@ -120,6 +140,7 @@
       </div>
     </div>
 
+    <div class="section-title" id="historyPrintTitle">Service history</div>
     <div class="section-title">Service history</div>
     <div class="list" id="history"></div>
   </div>
@@ -234,7 +255,7 @@
 
   var unlocked = false;
   var selectedService = null;
-  var editingEntryId = null; // <-- edit mode when non-null
+  var editingEntryId = null; // edit mode when non-null
 
   // DB-backed state
   var serverTitle = null;
@@ -256,6 +277,7 @@
 
   var lockBadge = document.getElementById("lockBadge");
   var unlockBtn = document.getElementById("unlockBtn");
+  var printBtn = document.getElementById("printBtn");
 
   var modal = document.getElementById("modal");
   var backdrop = document.getElementById("backdrop");
@@ -300,10 +322,10 @@
     var ownerHash = await sha256Hex(activeOwnerKey);
 
     var res = await supabase.rpc("init_vehicle", {
-  p_owner_key: ownerHash,
-  p_title: null,
-  p_vehicle_id: vehicleId
-});
+      p_vehicle_id: vehicleId,
+      p_owner_key: ownerHash,
+      p_title: null
+    });
     if (res.error) throw res.error;
 
     if (res.data && res.data.length) {
@@ -676,6 +698,10 @@
   document.getElementById("cancelBtn").onclick = closeModal;
   backdrop.onclick = closeModal;
 
+  printBtn.onclick = function () {
+    window.print();
+  };
+
   document.getElementById("saveBtn").onclick = async function () {
     if (!selectedService) return;
 
@@ -792,4 +818,3 @@
 </script>
 </body>
 </html>
-
