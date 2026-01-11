@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -82,6 +83,10 @@
     .modal .actions { display:flex; gap:10px; margin-top: 12px; flex-wrap:wrap; }
     .danger { border:1px solid #111; background:#fff; color:#111; }
     .owner-bar { margin-top: 10px; display:flex; gap:10px; align-items:center; justify-content:flex-start; flex-wrap:wrap; }
+
+    /* tiny buttons row on cards */
+    .card-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
+    .btn.sm { padding:8px 10px; border-radius: 12px; font-weight:800; }
   </style>
 </head>
 <body>
@@ -185,17 +190,25 @@
     return parts[1] + "/" + parts[2] + "/" + parts[0];
   }
 
+  // SHA-256 hex (no pgcrypto needed)
+  async function sha256Hex(text) {
+    var enc = new TextEncoder().encode(text);
+    var buf = await crypto.subtle.digest("SHA-256", enc);
+    var arr = Array.from(new Uint8Array(buf));
+    return arr.map(function(b){ return b.toString(16).padStart(2,"0"); }).join("");
+  }
+
   // ---------- URL params ----------
   var params = new URLSearchParams(location.search);
   var vehicleId = (params.get("v") || "ABC123").toUpperCase().trim();
   var ownerKeyFromUrl = (params.get("key") || "").trim();
 
-  // ---------- Supabase (REPLACE THESE TWO) ----------
+  // ---------- Supabase ----------
   const SUPABASE_URL = "https://wbgdmdyeuhmearetomyo.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndiZ2RtZHlldWhtZWFyZXRvbXlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgwODE2OTYsImV4cCI6MjA4MzY1NzY5Nn0.rRS2YMjvPP2MT5MgxBmo-p2-gw0H3Vp9BCSvo2SdzZw";
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // ---------- Owner key (used only for client-side unlock gate) ----------
+  // ---------- Owner key (client-side unlock gate) ----------
   var OWNER_KEY = "4062311418";
 
   var SERVICES = [
@@ -221,8 +234,9 @@
 
   var unlocked = false;
   var selectedService = null;
+  var editingEntryId = null; // <-- edit mode when non-null
 
-  // DB-backed state (shared across devices)
+  // DB-backed state
   var serverTitle = null;
   var serverEntries = [];
   var serverIntervals = null;
@@ -254,7 +268,6 @@
 
   // ---------- Supabase helpers ----------
   async function fetchLog(vId) {
-    // Vehicle row (may not exist yet)
     var v = await supabase
       .from("vehicles")
       .select("id,title,intervals")
@@ -284,15 +297,15 @@
   }
 
   async function ownerInitVehicleIfNeeded() {
-    // Claims or verifies owner key; also ensures vehicle row exists
+    var ownerHash = await sha256Hex(activeOwnerKey);
+
     var res = await supabase.rpc("init_vehicle", {
       p_vehicle_id: vehicleId,
-      p_owner_key: activeOwnerKey,
+      p_owner_hash: ownerHash,
       p_title: null
     });
     if (res.error) throw res.error;
 
-    // Update cached title/intervals from RPC return
     if (res.data && res.data.length) {
       serverTitle = (res.data[0].title || "").trim() || serverTitle;
       serverIntervals = res.data[0].intervals || (serverIntervals || {});
@@ -300,9 +313,11 @@
   }
 
   async function ownerAddEntry(entry) {
+    var ownerHash = await sha256Hex(activeOwnerKey);
+
     var res = await supabase.rpc("add_service_entry", {
       p_vehicle_id: vehicleId,
-      p_owner_key: activeOwnerKey,
+      p_owner_hash: ownerHash,
       p_type: entry.type,
       p_date: entry.date,
       p_mileage: entry.mileage,
@@ -312,10 +327,39 @@
     if (res.error) throw res.error;
   }
 
+  async function ownerUpdateEntry(entryId, entry) {
+    var ownerHash = await sha256Hex(activeOwnerKey);
+
+    var res = await supabase.rpc("update_service_entry", {
+      p_entry_id: entryId,
+      p_vehicle_id: vehicleId,
+      p_owner_hash: ownerHash,
+      p_type: entry.type,
+      p_date: entry.date,
+      p_mileage: entry.mileage,
+      p_notes: entry.notes || "",
+      p_tech: entry.tech || ""
+    });
+    if (res.error) throw res.error;
+  }
+
+  async function ownerDeleteEntry(entryId) {
+    var ownerHash = await sha256Hex(activeOwnerKey);
+
+    var res = await supabase.rpc("delete_service_entry", {
+      p_entry_id: entryId,
+      p_vehicle_id: vehicleId,
+      p_owner_hash: ownerHash
+    });
+    if (res.error) throw res.error;
+  }
+
   async function ownerUpdateVehicle(titleOrNull, intervalsOrNull) {
+    var ownerHash = await sha256Hex(activeOwnerKey);
+
     var res = await supabase.rpc("update_vehicle", {
       p_vehicle_id: vehicleId,
-      p_owner_key: activeOwnerKey,
+      p_owner_hash: ownerHash,
       p_title: titleOrNull,
       p_intervals: intervalsOrNull
     });
@@ -328,14 +372,11 @@
   }
 
   // ---------- DB-backed accessors ----------
-  function loadEntries() {
-    return serverEntries.slice();
-  }
+  function loadEntries() { return serverEntries.slice(); }
 
   function loadIntervals() {
     var base = Object.assign({}, DEFAULT_INTERVALS);
     if (serverIntervals && typeof serverIntervals === "object") {
-      // merge
       for (var k in serverIntervals) base[k] = serverIntervals[k];
       return base;
     }
@@ -408,16 +449,26 @@
     vehicleSubtitleEl.textContent = "";
   }
 
-  function openModal(serviceType) {
+  function openModal(serviceType, existingEntry) {
     if (!unlocked) return;
-    selectedService = serviceType;
-    modalTitle.textContent = "Add: " + serviceType;
 
-    var today = new Date();
-    dateEl.value = today.toISOString().slice(0,10);
-    mileageEl.value = "";
-    notesEl.value = "";
-    techEl.value = "";
+    selectedService = serviceType;
+    editingEntryId = existingEntry ? existingEntry.id : null;
+
+    modalTitle.textContent = (editingEntryId ? "Edit: " : "Add: ") + serviceType;
+
+    if (existingEntry) {
+      dateEl.value = existingEntry.date || "";
+      mileageEl.value = (typeof existingEntry.mileage === "number") ? String(existingEntry.mileage) : "";
+      notesEl.value = (existingEntry.notes || "").trim();
+      techEl.value = (existingEntry.tech || "").trim();
+    } else {
+      var today = new Date();
+      dateEl.value = today.toISOString().slice(0,10);
+      mileageEl.value = "";
+      notesEl.value = "";
+      techEl.value = "";
+    }
 
     backdrop.style.display = "block";
     modal.style.display = "block";
@@ -427,6 +478,7 @@
     backdrop.style.display = "none";
     modal.style.display = "none";
     selectedService = null;
+    editingEntryId = null;
   }
 
   function renderSettings() {
@@ -455,14 +507,12 @@
             var v = Number(input.value);
             next[type] = (isFinite(v) && v >= 0) ? Math.floor(v) : 0;
 
-            // Persist to DB for sync
             await ownerUpdateVehicle(null, next);
             serverIntervals = next;
 
             renderTiles();
           } catch (e) {
             alert("Could not save interval: " + (e.message || e));
-            // revert UI
             renderSettings();
           }
         };
@@ -568,6 +618,15 @@
 
       var milesRight = (e && typeof e.mileage === "number") ? e.mileage.toLocaleString() : "—";
 
+      var actionsHtml = "";
+      if (unlocked && e && e.id) {
+        actionsHtml =
+          "<div class='card-actions'>" +
+            "<button class='btn secondary sm' data-edit='1'>Edit</button>" +
+            "<button class='btn danger sm' data-del='1'>Delete</button>" +
+          "</div>";
+      }
+
       card.innerHTML =
         "<div class='card-top'>" +
           "<div>" +
@@ -580,9 +639,35 @@
             "<div class='mi-sub'>miles</div>" +
           "</div>" +
         "</div>" +
-        tech;
+        tech +
+        actionsHtml;
 
       historyEl.appendChild(card);
+
+      if (unlocked && e && e.id) {
+        (function(entryObj, cardEl){
+          var editBtn = cardEl.querySelector("[data-edit]");
+          var delBtn = cardEl.querySelector("[data-del]");
+
+          if (editBtn) editBtn.onclick = function(ev){
+            ev.preventDefault();
+            openModal(entryObj.type || "Service", entryObj);
+          };
+
+          if (delBtn) delBtn.onclick = async function(ev){
+            ev.preventDefault();
+            if (!confirm("Delete this entry? This cannot be undone.")) return;
+            try {
+              await ownerDeleteEntry(entryObj.id);
+              await fetchLog(vehicleId);
+              renderTiles();
+              renderHistory();
+            } catch (err) {
+              alert("Could not delete: " + (err.message || err));
+            }
+          };
+        })(e, card);
+      }
     }
   }
 
@@ -611,7 +696,12 @@
     };
 
     try {
-      await ownerAddEntry(entry);
+      if (editingEntryId) {
+        await ownerUpdateEntry(editingEntryId, entry);
+      } else {
+        await ownerAddEntry(entry);
+      }
+
       await fetchLog(vehicleId);
 
       closeModal();
@@ -623,7 +713,7 @@
   };
 
   document.getElementById("deleteAllBtn").onclick = function () {
-    alert("Clear all is disabled in the DB version. (We can add a safe owner-only delete later.)");
+    alert("Clear all is disabled in the DB version. Use Delete on individual entries.");
   };
 
   unlockBtn.onclick = async function () {
@@ -635,14 +725,12 @@
     var key = ownerKeyFromUrl || prompt("Enter owner key:");
     if (!key) return;
 
-    // Client-side gate (same as before)
     if (key !== OWNER_KEY) return alert("Wrong key.");
 
     activeOwnerKey = key;
 
     try {
       setUnlocked(true);
-      // Claim/verify in DB and ensure vehicle exists
       await ownerInitVehicleIfNeeded();
       await fetchLog(vehicleId);
 
@@ -685,7 +773,6 @@
       renderTiles();
       renderHistory();
 
-      // If URL includes key, auto-unlock (same behavior as before)
       if (ownerKeyFromUrl && ownerKeyFromUrl === OWNER_KEY) {
         activeOwnerKey = ownerKeyFromUrl;
         setUnlocked(true);
