@@ -300,10 +300,10 @@
     var ownerHash = await sha256Hex(activeOwnerKey);
 
     var res = await supabase.rpc("init_vehicle", {
-      p_vehicle_id: vehicleId,
-      p_owner_hash: ownerHash,
-      p_title: null
-    });
+  p_owner_key: ownerHash,
+  p_title: null,
+  p_vehicle_id: vehicleId
+});
     if (res.error) throw res.error;
 
     if (res.data && res.data.length) {
@@ -792,3 +792,4 @@
 </script>
 </body>
 </html>
+
